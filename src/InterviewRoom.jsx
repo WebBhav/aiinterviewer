@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
 
 const InterviewRoom = () => {
   const { state } = useLocation();
   const [question, setQuestion] = useState("Say, Thank you, Please start the interview");
   const [timeLeft, setTimeLeft] = useState(1800); // 30 mins
+  const isFirstPrompt = useRef(true);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -19,7 +20,8 @@ const InterviewRoom = () => {
     }, 1000);
 
     speakText("Welcome to the interview", () => {
-      startSpeechRecognition();
+      // Initial wait before first recognition
+      setTimeout(() => startSpeechRecognition(), 1000);
     });
 
     return () => clearInterval(interval);
@@ -30,14 +32,20 @@ const InterviewRoom = () => {
     utterance.lang = 'en-IN';
     utterance.pitch = 1;
     utterance.rate = 1;
+
+    // Use a male voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const maleVoice = voices.find(v => v.name.toLowerCase().includes("english") && v.name.toLowerCase().includes("male"));
+    if (maleVoice) utterance.voice = maleVoice;
+
     if (onEnd) {
       utterance.onend = onEnd;
     }
-    speechSynthesis.speak(utterance);
+    window.speechSynthesis.speak(utterance);
   };
 
   const startSpeechRecognition = () => {
-    const recognition = new window.webkitSpeechRecognition() || new window.SpeechRecognition();
+    const recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
     recognition.lang = "en-IN";
     recognition.continuous = false;
     recognition.interimResults = false;
@@ -56,8 +64,9 @@ const InterviewRoom = () => {
   };
 
   const fetchGeminiResponse = async (userInput) => {
+    const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyCBDLk1O6N172fvVe4h9db1jkGBYpK9Dq8`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,23 +76,24 @@ const InterviewRoom = () => {
               parts: [
                 {
                   text: `You are an interviewer for a full time ${state.role} role. Based on the candidate's answer: "${userInput}", ask the next follow-up question. 
-                Keep it brief (10-30 words), natural, and don't repeat the candidate's response. 
-                Respond as a human interviewer would — no asterisks, no markdown, no formatting. Just plain conversational text.`
+                  Keep it brief (10-30 words), natural, and don't repeat the candidate's response. 
+                  Respond as a human interviewer would — no asterisks, no markdown, no formatting. Just plain conversational text.`
                 }
-                ,
-              ],
-            },
-          ],
-        }),
+              ]
+            }
+          ]
+        })
       }
     );
 
     const data = await res.json();
     const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Thank you for your response.";
     setQuestion(geminiText);
-    speakText(geminiText, () => {
-      startSpeechRecognition(); // Keep the loop going
-    });
+
+    // Add a small delay before speaking to prevent overlapping
+    setTimeout(() => speakText(geminiText, () => {
+      startSpeechRecognition();
+    }), 1000);
   };
 
   return (
