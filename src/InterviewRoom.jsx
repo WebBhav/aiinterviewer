@@ -4,8 +4,8 @@ import { useLocation } from "react-router-dom";
 const InterviewRoom = () => {
   const { state } = useLocation();
   const [question, setQuestion] = useState("Say, Thank you, Please start the interview");
-  const [timeLeft, setTimeLeft] = useState(1800); // 30 mins
-  const isFirstPrompt = useRef(true);
+  const [timeLeft, setTimeLeft] = useState(1800); // 30 minutes
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -19,33 +19,53 @@ const InterviewRoom = () => {
       });
     }, 1000);
 
+    // Start with welcome voice
     speakText("Welcome to the interview", () => {
-      // Initial wait before first recognition
       setTimeout(() => startSpeechRecognition(), 1000);
     });
+
+    // Fallback: ensure speech recognition starts even if speech synthesis fails
+    setTimeout(() => {
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+        startSpeechRecognition();
+      }
+    }, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
   const speakText = (text, onEnd) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-IN';
+    utterance.lang = "en-IN";
     utterance.pitch = 1;
     utterance.rate = 1;
 
-    // Use a male voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const maleVoice = voices.find(v => v.name.toLowerCase().includes("english") && v.name.toLowerCase().includes("male"));
-    if (maleVoice) utterance.voice = maleVoice;
+    const setVoiceAndSpeak = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const maleVoice = voices.find(
+        (v) => v.name.toLowerCase().includes("english") && v.name.toLowerCase().includes("male")
+      );
+      if (maleVoice) utterance.voice = maleVoice;
+      if (onEnd) utterance.onend = onEnd;
+      window.speechSynthesis.speak(utterance);
+    };
 
-    if (onEnd) {
-      utterance.onend = onEnd;
+    if (window.speechSynthesis.getVoices().length === 0) {
+      window.speechSynthesis.onvoiceschanged = setVoiceAndSpeak;
+    } else {
+      setVoiceAndSpeak();
     }
-    window.speechSynthesis.speak(utterance);
   };
 
   const startSpeechRecognition = () => {
-    const recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech Recognition not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
     recognition.lang = "en-IN";
     recognition.continuous = false;
     recognition.interimResults = false;
@@ -58,42 +78,48 @@ const InterviewRoom = () => {
 
     recognition.onerror = (event) => {
       console.error("Speech recognition error", event);
+      setTimeout(() => startSpeechRecognition(), 1000); // retry on error
     };
 
+    recognitionRef.current = recognition;
     recognition.start();
   };
 
   const fetchGeminiResponse = async (userInput) => {
-    const API_KEY =AIzaSyCBDLk1O6N172fvVe4h9db1jkGBYpK9Dq8;
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: `You are an interviewer for a full time ${state.role} role. Based on the candidate's answer: "${userInput}", ask the next follow-up question. 
-                  Keep it brief (10-30 words), natural, and don't repeat the candidate's response. 
-                  Respond as a human interviewer would — no asterisks, no markdown, no formatting. Just plain conversational text.`
-                }
-              ]
-            }
-          ]
-        })
-      }
-    );
+    const API_KEY = "AIzaSyCBDLk1O6N172fvVe4h9db1jkGBYpK9Dq8";
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `You are an interviewer for a full time ${state?.role || "software engineer"} role. Based on the candidate's answer: "${userInput}", ask the next follow-up question. 
+Keep it brief (10-30 words), natural, and don't repeat the candidate's response. 
+Respond as a human interviewer would — no asterisks, no markdown, no formatting. Just plain conversational text.`
+                  }
+                ]
+              }
+            ]
+          }),
+        }
+      );
 
-    const data = await res.json();
-    const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Thank you for your response.";
-    setQuestion(geminiText);
+      const data = await res.json();
+      const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Thank you for your response.";
+      setQuestion(geminiText);
 
-    // Add a small delay before speaking to prevent overlapping
-    setTimeout(() => speakText(geminiText, () => {
-      startSpeechRecognition();
-    }), 1000);
+      setTimeout(() => speakText(geminiText, () => {
+        startSpeechRecognition();
+      }), 1000);
+    } catch (err) {
+      console.error("Gemini API Error:", err);
+      setQuestion("Sorry, something went wrong with the AI response.");
+    }
   };
 
   return (
